@@ -1,8 +1,9 @@
 "use client";
 import { useEffect, useState } from "react";
+import type { RateApiResponse } from "@/types/api";
 
 export default function RatesPage() {
-  const [data, setData] = useState<any>(null);
+  const [data, setData] = useState<RateApiResponse | null>(null);
 
   useEffect(() => {
     fetch("/api/rate")

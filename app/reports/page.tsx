@@ -1,9 +1,10 @@
 "use client";
 import { useState } from "react";
+import type { ReportApiResponse } from "@/types/api";
 
 export default function ReportsPage() {
   const [query, setQuery] = useState("비트코인 전망");
-  const [data, setData] = useState<any>(null);
+  const [data, setData] = useState<ReportApiResponse | null>(null);
 
   const getReport = async () => {
     const res = await fetch(`/api/report?query=${encodeURIComponent(query)}`);

@@ -1,8 +1,9 @@
 "use client";
 import { useEffect, useState } from "react";
+import type { PriceApiResponse } from "@/types/api";
 
 export default function PricesPage() {
-  const [data, setData] = useState<any>(null);
+  const [data, setData] = useState<PriceApiResponse | null>(null);
 
   useEffect(() => {
     fetch("/api/price")
