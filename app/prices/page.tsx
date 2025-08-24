@@ -80,7 +80,7 @@ export default function PricesPage() {
         </div>
       )}
 
-      {!loading && (!data || "error" in (data as any)) && (
+      {!loading && (!data || "error" in data) && (
         <p style={{ color: "crimson" }}>시세를 불러오지 못했습니다.</p>
       )}
     </div>

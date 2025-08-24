@@ -20,7 +20,7 @@ export default function ReportsPage() {
     setError(null);
     setData(null);
 
-    let quote: any = undefined;
+    let quote = undefined;
     if (rawQuote.trim()) {
       try {
         quote = JSON.parse(rawQuote);

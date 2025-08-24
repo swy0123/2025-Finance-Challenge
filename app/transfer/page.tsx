@@ -13,9 +13,21 @@ const currencies: Currency[] = ["KRW", "USD"];
 const stables: StableSymbol[] = ["USDT", "USDC"];
 const algoOptions: CoinAlgoName[] = ["NONE", "AAAA"];
 
+const CSSVARS = {
+  text: "var(--text)" as const,
+  sub: "var(--sub)" as const,
+  border: "var(--border)" as const,
+  borderStrong: "var(--border-strong)" as const,
+  panel: "var(--panel)" as const,
+  inputBg: "var(--input-bg)" as const,
+};
 // 런타임 타입 가드
-function hasTotals(x: any): x is QuoteResponse {
-  return x && typeof x === "object" && x.totals && typeof x.totals.finalTargetAmount === "number";
+function hasTotals(x: unknown): x is QuoteResponse {
+  if (typeof x !== "object" || x === null) return false;
+  const o = x as { totals?: unknown };
+  if (typeof o.totals !== "object" || o.totals === null) return false;
+  const t = (o.totals as { finalTargetAmount?: unknown }).finalTargetAmount;
+  return typeof t === "number";
 }
 
 export default function TransferPage() {
@@ -146,8 +158,8 @@ export default function TransferPage() {
   const baseInputStyle: React.CSSProperties = {
     width: "100%",
     boxSizing: "border-box",
-    background: inputBg,
-    color: text as any,
+    background: CSSVARS.inputBg,
+    color: CSSVARS.text,
     border: `1px solid ${border}`,
     borderRadius: 10,
     padding: "10px 12px",
@@ -181,15 +193,15 @@ export default function TransferPage() {
 
         {/* 2) 단계 토글 + 알고리즘 선택 */}
         <div style={{ display: "flex", gap: 16, alignItems: "center", marginBottom: 8, flexWrap: "wrap" }}>
-          <label style={{ display: "inline-flex", alignItems: "center", gap: 8, color: sub as any }}>
+          <label style={{ display: "inline-flex", alignItems: "center", gap: 8, color: CSSVARS.sub }}>
             <input type="checkbox" checked={enableFxBeforeCoin} onChange={(e) => setEnableFxBeforeCoin(e.target.checked)} />
             환전1 사용(Base→Via)
           </label>
-          <label style={{ display: "inline-flex", alignItems: "center", gap: 8, color: sub as any }}>
+          <label style={{ display: "inline-flex", alignItems: "center", gap: 8, color: CSSVARS.sub }}>
             <input type="checkbox" checked={enableFxAfterCoin} onChange={(e) => setEnableFxAfterCoin(e.target.checked)} />
             환전2 사용(Via→Target)
           </label>
-          <label style={{ display: "inline-flex", alignItems: "center", gap: 8, color: sub as any }}>
+          <label style={{ display: "inline-flex", alignItems: "center", gap: 8, color: CSSVARS.sub }}>
             <input type="checkbox" checked={enableCoinAlgo} onChange={(e) => setEnableCoinAlgo(e.target.checked)} />
             코인 알고리즘 적용
           </label>
@@ -270,7 +282,7 @@ export default function TransferPage() {
               <Stat label={`총 수수료 (${finalUnit})`} value={`${quote.fees.totalFeeInTarget}`} />
             </div>
             {quote.hooks?.notes?.length ? (
-              <div style={{ marginTop: 8, color: sub as any, fontSize: 12 }}>
+              <div style={{ marginTop: 8, color: CSSVARS.sub, fontSize: 12 }}>
                 {quote.hooks.notes.map((n, i) => <div key={i}>• {n}</div>)}
               </div>
             ) : null}
@@ -281,7 +293,7 @@ export default function TransferPage() {
         {geminiReport && (
           <div style={{ padding: 12, background: inputBg, border: `1px solid ${border}`, borderRadius: 12, marginTop: 8, lineHeight: 1.7 }}>
             <h3 style={{ marginTop: 0 }}>Gemini 분석 요약</h3>
-            <div style={{ whiteSpace: "pre-wrap", color: sub as any }}>{geminiReport.analysis}</div>
+            <div style={{ whiteSpace: "pre-wrap", color: CSSVARS.sub }}>{geminiReport.analysis}</div>
           </div>
         )}
       </div>
@@ -295,15 +307,15 @@ export default function TransferPage() {
           border: `1px solid ${borderStrong}`,
           borderRadius: 16,
           padding: 0,
-          background: panel as any,
-          color: text as any,
+          background: CSSVARS.panel,
+          color: CSSVARS.text,
         }}
       >
         <form method="dialog" style={{ margin: 0 }}>
           <div style={{ padding: 16, borderBottom: `1px solid ${border}`, background: "#0f1320", borderTopLeftRadius: 16, borderTopRightRadius: 16 }}>
             <h3 style={{ margin: 0 }}>최신 동향 보고서</h3>
           </div>
-          <div style={{ whiteSpace: "pre-wrap", lineHeight: 1.7, padding: 16, color: sub as any }}>
+          <div style={{ whiteSpace: "pre-wrap", lineHeight: 1.7, padding: 16, color: CSSVARS.sub }}>
             {trendsText}
           </div>
           <div style={{ display: "flex", justifyContent: "flex-end", padding: 12, gap: 8 }}>

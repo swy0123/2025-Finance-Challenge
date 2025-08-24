@@ -27,6 +27,10 @@ interface TrendsReqBody {
   query: string;
 }
 
+type PplxMessage = { role?: string; content?: string; citations?: string[] };
+type PplxChoice  = { message?: PplxMessage; text?: string; citations?: string[] };
+type PplxResp    = { choices?: PplxChoice[]; citations?: string[] };
+
 export async function POST(req: Request) {
   try {
     const { query } = (await req.json()) as TrendsReqBody;
@@ -78,22 +82,20 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "Perplexity API call failed" }, { status: 500 });
     }
 
-    let data: any = null;
+    let parsed: unknown;
     try {
-      data = JSON.parse(raw);
+      parsed = JSON.parse(raw);
     } catch {
-      // 비정형 응답 방어
-      data = { choices: [{ message: { content: raw } }] };
+      parsed = { choices: [{ message: { content: raw } }] } as PplxResp;
     }
+    const data = parsed as PplxResp;
 
-    // OpenAI 호환: choices[0].message.content
-    const text: string =
+    const text =
       data?.choices?.[0]?.message?.content ??
       data?.choices?.[0]?.text ??
       "동향 보고서를 불러오지 못했습니다.";
 
-    // Perplexity 인용 URL 추출 (버전별 구조 대비)
-    const citations: string[] =
+    const citations =
       data?.citations ??
       data?.choices?.[0]?.message?.citations ??
       data?.choices?.[0]?.citations ??
@@ -104,8 +106,9 @@ export async function POST(req: Request) {
       citations,
       model: PPLX_MODEL,
     });
-  } catch (err: any) {
-    console.error("[/api/trends] error:", err?.message || err);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error("[/api/trends] error:", msg);
     return NextResponse.json({ error: "Internal error generating trends" }, { status: 500 });
   }
 }

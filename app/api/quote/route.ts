@@ -232,10 +232,11 @@ export async function POST(req: Request) {
     };
 
     return NextResponse.json(payload);
-  } catch (err: any) {
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
     console.error("[/api/quote] error:", err);
     return NextResponse.json(
-      { error: "Internal error generating quote.", reason: String(err?.message || err) },
+      { error: "Internal error generating quote.", reason: msg },
       { status: 500 }
     );
   }

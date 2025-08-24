@@ -1,6 +1,6 @@
 // app/api/report/route.ts
 import { NextResponse } from "next/server";
-import type { ReportApiResponse } from "@/types/api";
+import type { QuoteResponse, ReportApiResponse } from "@/types/api";
 
 /**
  * /api/report
@@ -17,7 +17,7 @@ if (!GEMINI_API_KEY) {
 
 interface ReportRequestBody {
   query: string;
-  quote?: any; // /api/quote 결과를 그대로 전달받을 수 있음
+  quote?: QuoteResponse; // /api/quote 결과를 그대로 전달받을 수 있음
 }
 
 export async function POST(req: Request) {
@@ -74,7 +74,7 @@ export async function POST(req: Request) {
     };
 
     return NextResponse.json(payload);
-  } catch (err: any) {
+  } catch (err) {
     console.error("[/api/report] error:", err);
     return NextResponse.json(
       { error: "Internal error generating report" },

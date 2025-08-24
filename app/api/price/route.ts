@@ -46,8 +46,9 @@ export async function GET(req: Request) {
     };
 
     return NextResponse.json(payload);
-  } catch (err: any) {
-    console.error("[/api/price] error:", err?.message || err);
+  } catch (err) {
+  const msg = err instanceof Error ? err.message : String(err);
+    console.error("[/api/price] error:", msg);
     return NextResponse.json(
       { error: "Failed to fetch price from Upbit." },
       { status: 500 }

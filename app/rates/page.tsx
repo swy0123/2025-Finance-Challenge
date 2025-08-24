@@ -76,7 +76,7 @@ export default function RatesPage() {
           <div>기준시각: {new Date(data.asOf).toLocaleString()}</div>
         </div>
       )}
-      {!loading && (!data || "error" in (data as any)) && (
+      {!loading && (!data || "error" in (data)) && (
         <p style={{ color: "crimson" }}>환율을 불러오지 못했습니다.</p>
       )}
     </div>
