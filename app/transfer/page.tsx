@@ -7,12 +7,10 @@ import type {
   QuoteResponse,
   ReportApiResponse,
   CoinAlgoName,
+  ReportStage,
 } from "@/types/api";
 
-const currencies: Currency[] = ["KRW", "USD"];
-const stables: StableSymbol[] = ["USDT", "USDC"];
-const algoOptions: CoinAlgoName[] = ["NONE", "AAAA"];
-
+/** CSS 변수 토큰 */
 const CSSVARS = {
   text: "var(--text)" as const,
   sub: "var(--sub)" as const,
@@ -21,7 +19,18 @@ const CSSVARS = {
   panel: "var(--panel)" as const,
   inputBg: "var(--input-bg)" as const,
 };
-// 런타임 타입 가드
+
+const currencies: Currency[] = ["KRW", "USD"];
+const stables: StableSymbol[] = ["USDT", "USDC"];
+const algoOptions: CoinAlgoName[] = ["NONE", "AAAA"];
+
+/** 런타임 타입 가드들 */
+type ApiError = { error: string; reason?: string };
+function isApiError(x: unknown): x is ApiError {
+  if (typeof x !== "object" || x === null) return false;
+  const o = x as { error?: unknown };
+  return typeof o.error === "string";
+}
 function hasTotals(x: unknown): x is QuoteResponse {
   if (typeof x !== "object" || x === null) return false;
   const o = x as { totals?: unknown };
@@ -33,7 +42,8 @@ function hasTotals(x: unknown): x is QuoteResponse {
 export default function TransferPage() {
   // ===== 입력 상태 =====
   const [baseCurrency, setBaseCurrency] = useState<Currency>("KRW");
-  const [viaFiat, setViaFiat] = useState<Currency>("USD");
+  const [viaFiatBefore, setViaFiatBefore] = useState<Currency>("USD");
+  const [viaFiatAfter, setViaFiatAfter] = useState<Currency>("USD");
   const [stableSymbol, setStableSymbol] = useState<StableSymbol>("USDT");
   const [targetCurrency, setTargetCurrency] = useState<Currency>("KRW");
 
@@ -51,8 +61,14 @@ export default function TransferPage() {
 
   // ===== 결과/상태 =====
   const [quote, setQuote] = useState<QuoteResponse | null>(null);
+
+  // Gemini/Perplexity 결과 및 단계 표시
   const [geminiReport, setGeminiReport] = useState<ReportApiResponse | null>(null);
+  const [geminiStage, setGeminiStage] = useState<ReportStage | null>(null);
+
   const [trendsText, setTrendsText] = useState<string>("");
+  const [trendsStage, setTrendsStage] = useState<ReportStage | null>(null);
+
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
@@ -61,17 +77,30 @@ export default function TransferPage() {
   const openTrendsDialog = () => trendsDialogRef.current?.showModal();
   const closeTrendsDialog = () => trendsDialogRef.current?.close();
 
+  // 단계 가시성: 비활성화면 보고서 레이아웃 숨김
+  const isStageVisible = (st: ReportStage | null): boolean => {
+    if (!st) return true;               // null일 땐 체크 불필요
+    if (st === "coin" || st === "final") return true; // 항상 표시
+    if (st === "fxBefore") return enableFxBeforeCoin;
+    if (st === "fxAfter")  return enableFxAfterCoin;
+    return false;
+  };
+
   // ===== 액션 =====
   const handleQuote = async () => {
     setLoading(true);
-    setGeminiReport(null);
     setErrorMsg(null);
     setQuote(null);
+    setGeminiReport(null);
+    setGeminiStage(null);
+    setTrendsText("");
+    setTrendsStage(null);
     try {
       const body: QuoteRequest = {
         amount,
         baseCurrency,
-        viaFiat,
+        viaFiatBefore,
+        viaFiatAfter,
         stableSymbol,
         targetCurrency,
         enableFxBeforeCoin,
@@ -85,9 +114,15 @@ export default function TransferPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
       });
-      const data = await res.json();
-      if (!res.ok || data?.error) { setErrorMsg(data?.error ?? "견적 계산 중 오류가 발생했습니다."); return; }
-      if (!hasTotals(data)) { setErrorMsg("응답 형식이 예상과 다릅니다 (totals 누락)."); return; }
+      const data: unknown = await res.json();
+      if (!res.ok || isApiError(data)) {
+        setErrorMsg(isApiError(data) ? data.error : "견적 계산 중 오류가 발생했습니다.");
+        return;
+      }
+      if (!hasTotals(data)) {
+        setErrorMsg("응답 형식이 예상과 다릅니다 (totals 누락).");
+        return;
+      }
       setQuote(data);
     } catch {
       setErrorMsg("네트워크 오류가 발생했습니다.");
@@ -96,20 +131,43 @@ export default function TransferPage() {
     }
   };
 
-  const handleGeminiReport = async () => {
-    if (!quote) return;
+  // ---------- 단계별 Gemini ----------
+  const handleGemini = async (stage: ReportStage) => {
+    if (!quote) {
+      setErrorMsg("먼저 '견적 계산'을 실행해 주세요.");
+      return;
+    }
+    if (!isStageVisible(stage)) {
+      setErrorMsg("해당 단계가 비활성화되어 보고서를 생성할 수 없습니다.");
+      return;
+    }
     setLoading(true);
     setErrorMsg(null);
     setGeminiReport(null);
+    setGeminiStage(null);
     try {
+      const intent =
+        stage === "fxBefore"
+          ? "환전1(사전): 옵션 설명 + KRW/USD 추이 + DXY + 사전 환전 타이밍/가격"
+          : stage === "coin"
+          ? "코인: 일반 정보 + 발행 기관 + 신뢰성 근거(자산, 연식, 추이 등)"
+          : stage === "fxAfter"
+          ? "환전2(사후): 옵션 설명 + KRW/USD 추이 + DXY + 수취 직전 환전 타이밍/가격"
+          : "최종: 출발→목표까지 총 수수료율/금액 요약";
+
       const res = await fetch("/api/report", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ query: "스테이블코인 송금/거래 분석", quote }),
+        body: JSON.stringify({ stage, query: intent, quote }),
       });
-      const data = await res.json();
-      if (!res.ok || data?.error) { setErrorMsg(data?.error ?? "보고서 생성 중 오류가 발생했습니다."); return; }
-      setGeminiReport(data);
+      const data: unknown = await res.json();
+      if (!res.ok || isApiError(data)) {
+        setErrorMsg(isApiError(data) ? data.error : "보고서 생성 중 오류가 발생했습니다.");
+        return;
+      }
+      const r = data as ReportApiResponse;
+      setGeminiReport(r);
+      setGeminiStage(stage);
     } catch {
       setErrorMsg("네트워크 오류가 발생했습니다.");
     } finally {
@@ -117,28 +175,40 @@ export default function TransferPage() {
     }
   };
 
-  const handleTrends = async () => {
+  // ---------- 단계별 Perplexity ----------
+  const handleTrends = async (stage: ReportStage) => {
+    if (!isStageVisible(stage)) {
+      setErrorMsg("해당 단계가 비활성화되어 보고서를 생성할 수 없습니다.");
+      return;
+    }
     setLoading(true);
     setErrorMsg(null);
     setTrendsText("");
+    setTrendsStage(null);
     try {
-      const query = [
-        "stablecoin",
-        stableSymbol,
-        `${baseCurrency}-${viaFiat}-${targetCurrency}`,
-        enableFxBeforeCoin ? "fx_before:on" : "fx_before:off",
-        enableFxAfterCoin ? "fx_after:on" : "fx_after:off",
-        enableCoinAlgo ? `coin_algo:${coinAlgoName}` : "coin_algo:off",
-        "liquidity regulation remittance",
-      ].join(" ");
+      const baseInfo = `base=${baseCurrency}, viaBefore=${viaFiatBefore}, viaAfter=${viaFiatAfter}, target=${targetCurrency}, coin=${stableSymbol}, fx1=${enableFxBeforeCoin}, fx2=${enableFxAfterCoin}, algo=${enableCoinAlgo ? coinAlgoName : "OFF"}`;
+      const q =
+        stage === "fxBefore"
+          ? `[FX Before] ${baseInfo} | KRW/USD 최근 30~90일 추이 + DXY + 사전 환전 타이밍`
+          : stage === "coin"
+          ? `[COIN] ${baseInfo} | ${stableSymbol} 기본/발행기관/신뢰성 근거`
+          : stage === "fxAfter"
+          ? `[FX After] ${baseInfo} | KRW/USD 추이 + DXY + 수취 직전 환전 타이밍`
+          : `[FINAL] ${baseInfo} | 전체 수수료율·금액 총정리 및 개선 포인트`;
+
       const res = await fetch("/api/trends", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ query }),
+        body: JSON.stringify({ stage, query: q, quote }),
       });
-      const data = await res.json();
-      if (!res.ok || data?.error) { setErrorMsg(data?.error ?? "최신 동향 보고서 생성 중 오류가 발생했습니다."); return; }
-      setTrendsText(String(data?.text ?? ""));
+      const data: unknown = await res.json();
+      if (!res.ok || isApiError(data)) {
+        setErrorMsg(isApiError(data) ? data.error : "최신 동향 보고서 생성 중 오류가 발생했습니다.");
+        return;
+      }
+      const text = (data as { text?: string }).text ?? "";
+      setTrendsText(String(text));
+      setTrendsStage(stage);
       openTrendsDialog();
     } catch {
       setErrorMsg("네트워크 오류가 발생했습니다.");
@@ -147,28 +217,19 @@ export default function TransferPage() {
     }
   };
 
-  // ===== 다크 토큰 =====
-  const text = "var(--text)";
-  const sub = "var(--sub)";
-  const border = "var(--border)";
-  const borderStrong = "var(--border-strong)";
-  const panel = "var(--panel)";
-  const inputBg = "var(--input-bg)";
-
+  // ===== 스타일 =====
   const baseInputStyle: React.CSSProperties = {
     width: "100%",
     boxSizing: "border-box",
     background: CSSVARS.inputBg,
     color: CSSVARS.text,
-    border: `1px solid ${border}`,
+    border: `1px solid ${CSSVARS.border}`,
     borderRadius: 10,
     padding: "10px 12px",
     outline: "none",
   };
 
   const btn = "button";
-  const btnAlt1 = "button btn-alt-1";
-  const btnAlt2 = "button btn-alt-2";
 
   const finalUnit = quote?.inputs?.targetCurrency ?? targetCurrency;
 
@@ -179,27 +240,68 @@ export default function TransferPage() {
       <div className="card">
         {/* 1) 타임라인 */}
         <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap", marginBottom: 10 }}>
-          <Chip label="환전1 (Base→Via)" value={`${baseCurrency} → ${viaFiat}`} on={enableFxBeforeCoin} />
-          <Arrow />
+          {enableFxBeforeCoin && (
+            <>
+              <Chip label="환전1 (Base→ViaBefore)" value={`${baseCurrency} → ${viaFiatBefore}`} on={enableFxBeforeCoin} />
+              <Arrow />
+            </>
+          )}
           <Chip
             label="코인"
             value={stableSymbol}
             on
-            badge={{ label: (enableCoinAlgo ? coinAlgoName : "ALGO"), active: enableCoinAlgo }}
+            badge={{ label: enableCoinAlgo ? coinAlgoName : "ALGO", active: enableCoinAlgo }}
           />
-          <Arrow />
-          <Chip label="환전2 (Via→Target)" value={`${viaFiat} → ${targetCurrency}`} on={enableFxAfterCoin} />
+          {enableFxAfterCoin && (
+            <>
+              <Arrow />
+              <Chip label="환전2 (ViaAfter→Target)" value={`${viaFiatAfter} → ${targetCurrency}`} on={enableFxAfterCoin} />
+            </>
+          )}
         </div>
 
-        {/* 2) 단계 토글 + 알고리즘 선택 */}
-        <div style={{ display: "flex", gap: 16, alignItems: "center", marginBottom: 8, flexWrap: "wrap" }}>
+        {/* 1-1) 단계별 LLM 버튼들 (비활성 단계는 숨김) */}
+        {enableFxBeforeCoin && (
+          <StageToolbar
+            title="환전1(사전) 리포트"
+            caption="옵션 영향 / KRW·USD 추이 / DXY / 사전 타이밍"
+            onGemini={() => handleGemini("fxBefore")}
+            onTrends={() => handleTrends("fxBefore")}
+          />
+        )}
+
+        <StageToolbar
+          title="코인 단계 리포트"
+          caption="코인·발행기관 / (Perplexity) 신뢰성 근거"
+          onGemini={() => handleGemini("coin")}
+          onTrends={() => handleTrends("coin")}
+        />
+
+        {enableFxAfterCoin && (
+          <StageToolbar
+            title="환전2(사후) 리포트"
+            caption="옵션 영향 / KRW·USD 추이 / DXY / 수취 직전 타이밍"
+            onGemini={() => handleGemini("fxAfter")}
+            onTrends={() => handleTrends("fxAfter")}
+          />
+        )}
+
+        <StageToolbar
+          title="최종 종합 리포트"
+          caption="전체 수수료율/금액 총정리 (Perplexity)"
+          onGemini={null}
+          onTrends={() => handleTrends("final")}
+        />
+
+        {/* 2) 단계 토글 */}
+        <div style={{ display: "flex", gap: 16, alignItems: "center", margin: "8px 0 8px", flexWrap: "wrap" }}>
           <label style={{ display: "inline-flex", alignItems: "center", gap: 8, color: CSSVARS.sub }}>
             <input type="checkbox" checked={enableFxBeforeCoin} onChange={(e) => setEnableFxBeforeCoin(e.target.checked)} />
-            환전1 사용(Base→Via)
+            환전1 사용(Base→ViaBefore)
           </label>
           <label style={{ display: "inline-flex", alignItems: "center", gap: 8, color: CSSVARS.sub }}>
             <input type="checkbox" checked={enableFxAfterCoin} onChange={(e) => setEnableFxAfterCoin(e.target.checked)} />
-            환전2 사용(Via→Target)
+            환전2 사용(ViaAfter→Target)
           </label>
           <label style={{ display: "inline-flex", alignItems: "center", gap: 8, color: CSSVARS.sub }}>
             <input type="checkbox" checked={enableCoinAlgo} onChange={(e) => setEnableCoinAlgo(e.target.checked)} />
@@ -221,20 +323,25 @@ export default function TransferPage() {
         </div>
 
         {/* 3) 드롭다운 */}
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: 12, marginBottom: 12 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(5, minmax(0, 1fr))", gap: 12, marginBottom: 12 }}>
           <Field label="보내는 통화 (Base)">
             <select value={baseCurrency} onChange={(e) => setBaseCurrency(e.target.value as Currency)} style={baseInputStyle}>
               {currencies.map((c) => <option key={c} value={c}>{c}</option>)}
             </select>
           </Field>
-          <Field label="중간 환전 (Via)">
-            <select value={viaFiat} onChange={(e) => setViaFiat(e.target.value as Currency)} style={baseInputStyle}>
+          <Field label="중간 환전 (사전 ViaBefore)">
+            <select value={viaFiatBefore} onChange={(e) => setViaFiatBefore(e.target.value as Currency)} style={baseInputStyle}>
               {currencies.map((c) => <option key={c} value={c}>{c}</option>)}
             </select>
           </Field>
           <Field label="스테이블 코인">
             <select value={stableSymbol} onChange={(e) => setStableSymbol(e.target.value as StableSymbol)} style={baseInputStyle}>
               {stables.map((s) => <option key={s} value={s}>{s}</option>)}
+            </select>
+          </Field>
+          <Field label="중간 환전 (사후 ViaAfter)">
+            <select value={viaFiatAfter} onChange={(e) => setViaFiatAfter(e.target.value as Currency)} style={baseInputStyle}>
+              {currencies.map((c) => <option key={c} value={c}>{c}</option>)}
             </select>
           </Field>
           <Field label="받는 통화 (Target)">
@@ -260,23 +367,21 @@ export default function TransferPage() {
           </Field>
         </div>
 
-        {/* 5) 액션 버튼 */}
+        {/* 5) 액션: 견적 계산 */}
         <div style={{ display: "flex", gap: 10, marginBottom: 8, flexWrap: "wrap" }}>
           <button onClick={handleQuote} disabled={loading} className={btn}>견적 계산</button>
-          <button onClick={handleGeminiReport} disabled={!quote || loading} className={btnAlt1}>Gemini 분석 보고서</button>
-          <button onClick={handleTrends} disabled={loading} className={btnAlt2}>최신 동향 보고서 (Perplexity)</button>
         </div>
 
         {/* 에러 */}
         {errorMsg && (
-          <p className="text-danger" style={{ marginBottom: 8, padding: "6px 8px", background: "#201317", borderRadius: 8 }}>
+          <p style={{ marginBottom: 8, padding: "6px 8px", background: "#201317", borderRadius: 8, color: "#ff6b6b" }}>
             {errorMsg}
           </p>
         )}
 
         {/* 6) 결과 */}
         {quote && hasTotals(quote) && (
-          <div style={{ marginTop: 8, marginBottom: 6, lineHeight: 1.7, background: inputBg, border: `1px solid ${border}`, borderRadius: 12, padding: 12 }}>
+          <div style={{ marginTop: 8, marginBottom: 6, lineHeight: 1.7, background: CSSVARS.inputBg, border: `1px solid ${CSSVARS.border}`, borderRadius: 12, padding: 12 }}>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
               <Stat label={`최종 수취액 (${finalUnit})`} value={`${quote.totals.finalTargetAmount}`} />
               <Stat label={`총 수수료 (${finalUnit})`} value={`${quote.fees.totalFeeInTarget}`} />
@@ -289,47 +394,89 @@ export default function TransferPage() {
           </div>
         )}
 
-        {/* Gemini 요약 */}
-        {geminiReport && (
-          <div style={{ padding: 12, background: inputBg, border: `1px solid ${border}`, borderRadius: 12, marginTop: 8, lineHeight: 1.7 }}>
-            <h3 style={{ marginTop: 0 }}>Gemini 분석 요약</h3>
-            <div style={{ whiteSpace: "pre-wrap", color: CSSVARS.sub }}>{geminiReport.analysis}</div>
+        {/* Gemini 요약 (단계 표시) — 비활성화면 숨김 */}
+        {geminiReport && geminiStage && isStageVisible(geminiStage) && (
+          <div style={{ padding: 12, background: CSSVARS.inputBg, border: `1px solid ${CSSVARS.border}`, borderRadius: 12, marginTop: 8, lineHeight: 1.7 }}>
+            <h3 style={{ marginTop: 0 }}>
+              Gemini 분석 요약 — {geminiStage === "fxBefore" ? "환전1(사전)" : geminiStage === "coin" ? "코인" : geminiStage === "fxAfter" ? "환전2(사후)" : "최종"}
+            </h3>
+            <div style={{ whiteSpace: "pre-wrap", color: CSSVARS.sub }}>
+              {geminiReport.analysis}
+            </div>
           </div>
         )}
       </div>
 
-      {/* Perplexity 다이얼로그 */}
-      <dialog
-        ref={trendsDialogRef}
-        style={{
-          maxWidth: 820,
-          width: "90%",
-          border: `1px solid ${borderStrong}`,
-          borderRadius: 16,
-          padding: 0,
-          background: CSSVARS.panel,
-          color: CSSVARS.text,
-        }}
-      >
-        <form method="dialog" style={{ margin: 0 }}>
-          <div style={{ padding: 16, borderBottom: `1px solid ${border}`, background: "#0f1320", borderTopLeftRadius: 16, borderTopRightRadius: 16 }}>
-            <h3 style={{ margin: 0 }}>최신 동향 보고서</h3>
-          </div>
-          <div style={{ whiteSpace: "pre-wrap", lineHeight: 1.7, padding: 16, color: CSSVARS.sub }}>
-            {trendsText}
-          </div>
-          <div style={{ display: "flex", justifyContent: "flex-end", padding: 12, gap: 8 }}>
-            <button className={btn} onClick={closeTrendsDialog} style={{ padding: "8px 14px" }}>
-              닫기
-            </button>
-          </div>
-        </form>
-      </dialog>
+      {/* Perplexity 다이얼로그 — 비활성 단계면 통째로 숨김 */}
+      {(!trendsStage || isStageVisible(trendsStage)) && (
+        <dialog
+          ref={trendsDialogRef}
+          style={{
+            maxWidth: 820,
+            width: "90%",
+            border: `1px solid ${CSSVARS.borderStrong}`,
+            borderRadius: 16,
+            padding: 0,
+            background: CSSVARS.panel,
+            color: CSSVARS.text,
+          }}
+        >
+          <form method="dialog" style={{ margin: 0 }}>
+            <div style={{ padding: 16, borderBottom: `1px solid ${CSSVARS.border}`, background: "#0f1320", borderTopLeftRadius: 16, borderTopRightRadius: 16 }}>
+              <h3 style={{ margin: 0 }}>
+                최신 동향 보고서 — {trendsStage === "fxBefore" ? "환전1(사전)" : trendsStage === "coin" ? "코인" : trendsStage === "fxAfter" ? "환전2(사후)" : "최종"}
+              </h3>
+            </div>
+            <div style={{ whiteSpace: "pre-wrap", lineHeight: 1.7, padding: 16, color: CSSVARS.sub }}>
+              {trendsText}
+            </div>
+            <div style={{ display: "flex", justifyContent: "flex-end", padding: 12, gap: 8 }}>
+              <button className="button" onClick={() => trendsDialogRef.current?.close()} style={{ padding: "8px 14px" }}>
+                닫기
+              </button>
+            </div>
+          </form>
+        </dialog>
+      )}
     </div>
   );
 }
 
 /** 소품들 */
+function StageToolbar(props: {
+  title: string;
+  caption: string;
+  onGemini: (() => void) | null;
+  onTrends: () => void;
+}) {
+  return (
+    <div style={{
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "space-between",
+      gap: 12,
+      padding: "10px 12px",
+      margin: "8px 0",
+      border: `1px solid ${CSSVARS.border}`,
+      borderRadius: 12,
+      background: CSSVARS.inputBg,
+    }}>
+      <div>
+        <div style={{ fontWeight: 600 }}>{props.title}</div>
+        <div style={{ color: CSSVARS.sub, fontSize: 12 }}>{props.caption}</div>
+      </div>
+      <div style={{ display: "flex", gap: 8 }}>
+        {props.onGemini ? (
+          <button onClick={props.onGemini} className="button btn-alt-1">Gemini 분석</button>
+        ) : (
+          <button disabled className="button btn-alt-1" title="해당 단계에서는 Gemini 버튼이 비활성화되었어요">Gemini 분석</button>
+        )}
+        <button onClick={props.onTrends} className="button btn-alt-2">최신 동향 (Perplexity)</button>
+      </div>
+    </div>
+  );
+}
+
 function Chip({
   label,
   value,
@@ -351,7 +498,7 @@ function Chip({
           fontSize: 11,
           padding: "2px 8px",
           borderRadius: 999,
-          border: `1px solid var(--border)`,
+          border: `1px solid ${CSSVARS.border}`,
           background: on ? "rgba(106,169,255,0.18)" : "rgba(255,255,255,0.06)",
         }}
       >
@@ -364,7 +511,7 @@ function Chip({
             fontSize: 11,
             padding: "2px 8px",
             borderRadius: 999,
-            border: `1px solid var(--border)`,
+            border: `1px solid ${CSSVARS.border}`,
             background: badge.active ? "rgba(90,200,120,0.22)" : "rgba(255,255,255,0.06)",
           }}
           title={badge.label}
@@ -375,7 +522,7 @@ function Chip({
     </div>
   );
 }
-function Arrow() { return <span style={{ opacity: 0.6, color: "var(--sub)" }}>→</span>; }
+function Arrow() { return <span style={{ opacity: 0.6, color: CSSVARS.sub }}>→</span>; }
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <label style={{ display: "grid", gap: 6 }}>

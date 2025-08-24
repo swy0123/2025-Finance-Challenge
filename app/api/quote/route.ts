@@ -10,12 +10,6 @@ import type {
   CoinAlgoName,
 } from "@/types/api";
 
-/**
- * 견적 계산 파이프라인 (환전1 → 코인(알고리즘) → 환전2)
- * - 환전1(Base→Via), 환전2(Via→Target)은 각자 옵션으로 생략 가능
- * - 코인 단계에서 알고리즘(예: AAAA)을 선택적으로 적용 가능
- */
-
 type Fiat = "KRW" | "USD";
 
 const SUPPORTED_FIAT: Currency[] = ["KRW", "USD"];
@@ -68,7 +62,6 @@ function applyCoinAlgorithm(input: {
 }): { coinForSell: number; notes: string[] } {
   const notes: string[] = [];
 
-  // 비활성 또는 'NONE'이면 그대로 통과
   if (!input.enabled || !input.algoName || input.algoName === "NONE") {
     notes.push("coin algorithm disabled");
     return { coinForSell: input.coinAfterNetwork, notes };
@@ -76,13 +69,11 @@ function applyCoinAlgorithm(input: {
 
   switch (input.algoName) {
     case "AAAA": {
-      // 임시 알고리즘: 코인 수량에 1 헤어컷
-      const coinForSell = Math.max(0, input.coinAfterNetwork * 1);
-      notes.push("algorithm AAAA applied: coinAfterNetwork × 1");
+      const coinForSell = Math.max(0, input.coinAfterNetwork * 0.9);
+      notes.push("algorithm AAAA applied: coinAfterNetwork × 0.9");
       return { coinForSell, notes };
     }
     default: {
-      // 알 수 없는 알고리즘 → 미적용
       notes.push(`unknown algorithm '${input.algoName}', skipped`);
       return { coinForSell: input.coinAfterNetwork, notes };
     }
@@ -100,9 +91,12 @@ export async function POST(req: Request) {
 
     // ----- 입력 검증 -----
     if (!body || typeof body.amount !== "number" || body.amount <= 0) return badRequest("amount must be a positive number");
-    const { baseCurrency, viaFiat, stableSymbol, targetCurrency } = body;
+
+    const { baseCurrency, viaFiatBefore, viaFiatAfter, stableSymbol, targetCurrency } = body;
+
     if (!SUPPORTED_FIAT.includes(baseCurrency)) return badRequest("unsupported baseCurrency");
-    if (!SUPPORTED_FIAT.includes(viaFiat)) return badRequest("unsupported viaFiat");
+    if (!SUPPORTED_FIAT.includes(viaFiatBefore)) return badRequest("unsupported viaFiatBefore");
+    if (!SUPPORTED_FIAT.includes(viaFiatAfter)) return badRequest("unsupported viaFiatAfter");
     if (!SUPPORTED_FIAT.includes(targetCurrency)) return badRequest("unsupported targetCurrency");
     if (!SUPPORTED_STABLE.includes(stableSymbol)) return badRequest("unsupported stableSymbol");
 
@@ -119,15 +113,21 @@ export async function POST(req: Request) {
     const coinAlgoName: CoinAlgoName = body.coinAlgoName ?? "NONE";
 
     // ----- 1) 단계별 거래 통화 결정 -----
-    const buyCurrency: Fiat  = enableFxBeforeCoin ? viaFiat : baseCurrency;      // 매수 통화
-    const sellCurrency: Fiat = enableFxAfterCoin  ? viaFiat : targetCurrency;    // 매도 통화
+    const buyCurrency: Fiat  = enableFxBeforeCoin ? (viaFiatBefore as Fiat) : (baseCurrency as Fiat);
+    const sellCurrency: Fiat = enableFxAfterCoin  ? (viaFiatAfter  as Fiat) : (targetCurrency as Fiat);
 
     // ----- 2) 필요한 환율만 조회 -----
+    // Base → ViaBefore
     const baseToViaRate =
-      enableFxBeforeCoin && baseCurrency !== viaFiat ? (await getRate(origin, baseCurrency, viaFiat)).rate : 1;
+      enableFxBeforeCoin && baseCurrency !== viaFiatBefore
+        ? (await getRate(origin, baseCurrency, viaFiatBefore)).rate
+        : 1;
 
+    // ViaAfter → Target
     const viaToTargetRate =
-      enableFxAfterCoin && viaFiat !== targetCurrency ? (await getRate(origin, viaFiat, targetCurrency)).rate : 1;
+      enableFxAfterCoin && viaFiatAfter !== targetCurrency
+        ? (await getRate(origin, viaFiatAfter, targetCurrency)).rate
+        : 1;
 
     const effBaseToViaRate   = enableFxBeforeCoin ? baseToViaRate   * (1 - fxSpreadPct / 100) : 1;
     const effViaToTargetRate = enableFxAfterCoin  ? viaToTargetRate * (1 - fxSpreadPct / 100) : 1;
@@ -144,7 +144,7 @@ export async function POST(req: Request) {
       enableFxBeforeCoin && baseCurrency !== buyCurrency ? baseAmount * effBaseToViaRate : baseAmount;
 
     // (b) 코인 매수 (수수료 %)
-    const buyFee = cashForBuy * (tradePct / 100);     // buyCurrency 단위
+    const buyFee = cashForBuy * (tradePct / 100);         // buyCurrency 단위
     const coinAmount = Math.max(0, (cashForBuy - buyFee) / buyPrice);
 
     // (c) 네트워크 수수료(코인 수량) 차감
@@ -170,7 +170,9 @@ export async function POST(req: Request) {
 
     // (f) 환전2: sellCurrency → targetCurrency
     const finalTargetAmount =
-      enableFxAfterCoin && sellCurrency !== targetCurrency ? cashAfterSell * effViaToTargetRate : cashAfterSell;
+      enableFxAfterCoin && sellCurrency !== targetCurrency
+        ? cashAfterSell * effViaToTargetRate
+        : cashAfterSell;
 
     // ----- 5) 총 수수료(최종 통화로 환산) -----
     const buyToSellFactor = buyPrice > 0 ? sellPrice / buyPrice : 1;
@@ -180,15 +182,17 @@ export async function POST(req: Request) {
       networkFeeInBuy * buyToSellFactor;    // 네트워크 수수료 환산
 
     const totalFeeInTarget =
-      enableFxAfterCoin && sellCurrency !== targetCurrency ? feesInSell * effViaToTargetRate : feesInSell;
+      enableFxAfterCoin && sellCurrency !== targetCurrency
+        ? feesInSell * effViaToTargetRate
+        : feesInSell;
 
     // ----- 6) 응답 -----
     const nowIso = new Date().toISOString();
     const payload: QuoteResponse = {
       inputs: { ...body, timestamp: nowIso },
       fx: {
-        baseToViaRate: Number(baseToViaRate.toFixed(6)),
-        viaToTargetRate: Number(viaToTargetRate.toFixed(6)),
+        baseToViaRate: Number(baseToViaRate.toFixed(6)),          // Base → ViaBefore
+        viaToTargetRate: Number(viaToTargetRate.toFixed(6)),      // ViaAfter → Target
         effBaseToViaRate: Number(effBaseToViaRate.toFixed(6)),
         effViaToTargetRate: Number(effViaToTargetRate.toFixed(6)),
         asOf: nowIso,
@@ -221,11 +225,11 @@ export async function POST(req: Request) {
         riskAdjustmentApplied: enableCoinAlgo,
         notes: [
           ...algoResult.notes,
-          !enableFxBeforeCoin && baseCurrency !== viaFiat
+          !enableFxBeforeCoin && baseCurrency !== viaFiatBefore
             ? "enableFxBeforeCoin=false: 환전1 생략 → 매수 통화는 baseCurrency로 계산."
             : "",
-          !enableFxAfterCoin && viaFiat !== targetCurrency
-            ? "enableFxAfterCoin=false: 환전2 생략 → 최종 금액은 sellCurrency(=via 또는 target) 단위."
+          !enableFxAfterCoin && viaFiatAfter !== targetCurrency
+            ? "enableFxAfterCoin=false: 환전2 생략 → 최종 금액은 sellCurrency(=viaAfter 또는 target) 단위."
             : "",
         ].filter(Boolean),
       },
@@ -234,7 +238,7 @@ export async function POST(req: Request) {
     return NextResponse.json(payload);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    console.error("[/api/quote] error:", err);
+    console.error("[/api/quote] error:", msg);
     return NextResponse.json(
       { error: "Internal error generating quote.", reason: msg },
       { status: 500 }
