@@ -1,49 +1,84 @@
+// app/api/report/route.ts
 import { NextResponse } from "next/server";
-import { GoogleGenerativeAI } from "@google/generative-ai";
+import type { ReportApiResponse } from "@/types/api";
 
-export async function GET(req: Request) {
+/**
+ * /api/report
+ * - POST 요청으로 쿼리(query)와 quote 결과(optional)를 전달받아 Gemini에 분석 요청
+ * - 환경변수: GEMINI_API_KEY
+ */
+
+const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
+const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-1.5-flash";
+
+if (!GEMINI_API_KEY) {
+  console.warn("[/api/report] Missing GEMINI_API_KEY");
+}
+
+interface ReportRequestBody {
+  query: string;
+  quote?: any; // /api/quote 결과를 그대로 전달받을 수 있음
+}
+
+export async function POST(req: Request) {
   try {
-    const { searchParams } = new URL(req.url);
-    const query = searchParams.get("query") || "비트코인 전망";
+    const body: ReportRequestBody = await req.json();
+    const { query, quote } = body;
 
-    console.log(query);
-    // 1. Perplexity 검색
-    const ppxRes = await fetch("https://api.perplexity.ai/chat/completions", {
+    if (!query) {
+      return NextResponse.json({ error: "Missing query" }, { status: 400 });
+    }
+
+    // 프롬프트 구성
+    let prompt = `사용자가 요청한 분석 주제: ${query}\n\n`;
+    if (quote) {
+      prompt += `추가 수치 데이터 (참고용):\n${JSON.stringify(quote, null, 2)}\n\n`;
+    }
+    prompt += `위 정보를 바탕으로, 스테이블코인 송금/거래의 적절성 및 주의사항을 간단히 요약해 주세요.
+- 지나치게 장황하지 말고 3~4문장 이내로 정리
+- 현재 시점에서의 기회/위험 요소를 함께 언급
+`;
+
+    // Gemini API 호출
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_API_KEY}`;
+    const res = await fetch(url, {
       method: "POST",
-      headers: {
-        "Authorization": `Bearer ${process.env.PERPLEXITY_API_KEY}`,
-        "Content-Type": "application/json",
-      },
-
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        model: "sonar-pro",
-        messages: [{ role: "user", content: `Search latest analysis about ${query}` }],
+        contents: [
+          {
+            role: "user",
+            parts: [{ text: prompt }],
+          },
+        ],
       }),
     });
 
-    const ppxData = await ppxRes.json();
-    const searchSummary = ppxData.choices?.[0]?.message?.content || "검색 결과 없음";
+    if (!res.ok) {
+      const errText = await res.text();
+      console.error("[/api/report] Gemini error:", errText);
+      return NextResponse.json(
+        { error: "Gemini API call failed" },
+        { status: 500 }
+      );
+    }
 
-    // 2. Gemini 요약
-    const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!);
-    const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
+    const data = await res.json();
+    const text =
+      data?.candidates?.[0]?.content?.parts?.[0]?.text ||
+      "분석 결과를 불러오지 못했습니다.";
 
-    const prompt =
-      `아래 내용을 한국어로 간결히 요약하고, *핵심 포인트 3개*와 *단기/중기 전망*을 bullet로 정리해줘.\n\n` +
-      `=== 원문 시작 ===\n${searchSummary}\n=== 원문 끝 ===`;
+    const payload: ReportApiResponse = {
+      searchSummary: query,
+      analysis: text,
+    };
 
-    const geminiRes = await model.generateContent(prompt);
-    const geminiOutput = geminiRes.response.text();
-
-
-    return NextResponse.json({
-      success: true,
-      query,
-      searchSummary,
-      analysis: geminiOutput,
-    });
-
-  } catch (err) {
-    return NextResponse.json({ success: false, error: String(err) }, { status: 500 });
+    return NextResponse.json(payload);
+  } catch (err: any) {
+    console.error("[/api/report] error:", err);
+    return NextResponse.json(
+      { error: "Internal error generating report" },
+      { status: 500 }
+    );
   }
 }

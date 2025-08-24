@@ -1,26 +1,211 @@
-@import "tailwindcss";
+/* app/globals.css */
 
+/* ---------- CSS Reset (간단) ---------- */
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+html, body, #__next {
+  height: 100%;
+}
+body, h1, h2, h3, h4, h5, p, ul, ol, figure {
+  margin: 0;
+  padding: 0;
+}
+img, picture, video, canvas, svg {
+  display: block;
+  max-width: 100%;
+}
+button, input, select, textarea {
+  font: inherit;
+}
+
+/* ---------- Dark Theme Tokens ---------- */
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --bg: #0b0b0f;
+  --panel: #141826;
+  --chip: #1b2030;
+  --text: #e8eaf3;
+  --sub: rgba(232,234,243,0.7);
+  --border: rgba(255,255,255,0.08);
+  --border-strong: rgba(255,255,255,0.14);
+  --accent: #6aa9ff;
+  --danger: #ff6b6b;
+
+  --input-bg: #101520;
+  --focus-ring: 0 0 0 3px rgba(106,169,255,0.28);
+  --shadow: 0 6px 20px rgba(0,0,0,0.35);
 }
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+/* ---------- Base ---------- */
+html {
+  color-scheme: dark;
 }
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
-}
-
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
+
+/* 링크 */
+a {
+  color: var(--accent);
+  text-decoration: none;
+}
+a:hover { text-decoration: underline; }
+
+/* ---------- Forms ---------- */
+input[type="text"],
+input[type="number"],
+input[type="search"],
+input[type="email"],
+select,
+textarea {
+  background: var(--input-bg);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 10px 12px;
+  outline: none;
+  transition: box-shadow .15s ease, border-color .15s ease, background .2s ease;
+}
+input::placeholder,
+textarea::placeholder {
+  color: rgba(232,234,243,0.45);
+}
+input:focus,
+select:focus,
+textarea:focus {
+  border-color: var(--accent);
+  box-shadow: var(--focus-ring);
+}
+
+/* select 화살표 일관성 */
+select {
+  appearance: none;
+  background-image:
+    linear-gradient(45deg, transparent 50%, var(--sub) 50%),
+    linear-gradient(135deg, var(--sub) 50%, transparent 50%),
+    linear-gradient(to right, transparent, transparent);
+  background-position:
+    calc(100% - 18px) calc(50% - 3px),
+    calc(100% - 12px) calc(50% - 3px),
+    100% 0;
+  background-size: 6px 6px, 6px 6px, 2.5em 2.5em;
+  background-repeat: no-repeat;
+  padding-right: 2.8em;
+}
+
+/* ---------- Buttons ---------- */
+button {
+  background: linear-gradient(180deg,#2a3350,#1c2338);
+  color: var(--text);
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
+  padding: 10px 14px;
+  cursor: pointer;
+  box-shadow: var(--shadow);
+  transition: transform .06s ease, filter .15s ease, box-shadow .15s ease, border-color .15s ease;
+}
+button:hover {
+  filter: brightness(1.05);
+  border-color: var(--accent);
+}
+button:active {
+  transform: translateY(1px);
+}
+button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+  filter: none;
+}
+
+/* 변형 버튼(보조 색감) */
+button.btn-alt-1 { background: linear-gradient(180deg,#2a425a,#1d2f44); }
+button.btn-alt-2 { background: linear-gradient(180deg,#2b3a63,#1a2444); }
+
+/* ---------- Cards/Panels ---------- */
+.card {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 16px;
+  box-shadow: var(--shadow);
+}
+
+/* ---------- Chips (타임라인 캡슐) ---------- */
+.chip {
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--chip);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+.chip .sub {
+  font-size: 12px;
+  color: var(--sub);
+}
+
+/* ---------- Stat Block ---------- */
+.stat {
+  display: grid;
+  gap: 4px;
+}
+.stat .label {
+  font-size: 12px;
+  opacity: 0.8;
+}
+.stat .value {
+  font-size: 18px;
+}
+
+/* ---------- Dialog ---------- */
+dialog {
+  border: 1px solid var(--border-strong);
+  border-radius: 16px;
+  padding: 0;
+  background: var(--panel);
+  color: var(--text);
+  box-shadow: var(--shadow);
+}
+dialog::backdrop {
+  background: rgba(0,0,0,0.6);
+}
+
+/* ---------- Scrollbar ---------- */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255,255,255,0.25) transparent;
+}
+*::-webkit-scrollbar {
+  height: 10px;
+  width: 10px;
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+*::-webkit-scrollbar-thumb {
+  background: rgba(255,255,255,0.25);
+  border-radius: 10px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+*::-webkit-scrollbar-thumb:hover {
+  background: rgba(255,255,255,0.35);
+}
+
+/* ---------- Utility ---------- */
+.hr {
+  height: 1px;
+  background: var(--border);
+  border: none;
+  margin: 12px 0;
+}
+.text-sub { color: var(--sub); }
+.text-danger { color: var(--danger); }
+.bg-input { background: var(--input-bg); }
