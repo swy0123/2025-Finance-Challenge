@@ -3,17 +3,15 @@ import { NextResponse } from "next/server";
 import type { QuoteResponse, ReportStage } from "@/types/api";
 
 interface TrendsRequestBody {
-  stage: ReportStage;      // "fxBefore" | "coin" | "fxAfter" | "final"
+  stage: ReportStage;
   query: string;
   quote?: QuoteResponse;
 }
 
-/** Perplexity REST API */
 const PPLX_API_KEY = process.env.PERPLEXITY_API_KEY || "";
 const PPLX_MODEL = process.env.PERPLEXITY_MODEL || "sonar";
 const PPLX_URL = "https://api.perplexity.ai/chat/completions";
 
-/** Perplexity 응답 타입(필요 필드만) */
 type PplxChatMessage = { role?: string; content?: string };
 type PplxChoice = { index?: number; message?: PplxChatMessage; finish_reason?: string; citations?: string[] };
 type PplxResp = { id?: string; model?: string; created?: number; choices?: PplxChoice[]; usage?: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number } };
@@ -34,10 +32,18 @@ function extractCitations(r: PplxResp): string[] {
 const fmt = (n: number | undefined, d = 6) =>
   typeof n === "number" && Number.isFinite(n) ? Number(n.toFixed(d)) : undefined;
 
-/** 단계별 프롬프트 */
+function todayISO(): string {
+  return new Date().toISOString().slice(0, 10);
+}
+
+/** 단계별 프롬프트 — 최근 3일을 '라인 로그'로, 테이블/코드블록 금지 */
 function buildPrompt(input: TrendsRequestBody): string {
   const { stage, query, quote } = input;
-  const header = `You are a bilingual (Korean-first) fintech research assistant. Be concise, numeric-first, bulleted. Add dates and levels when possible.`;
+
+  const header =
+`You are a bilingual (Korean-first) fintech research assistant.
+Return concise bullets and a **3-day line log**. Cite reliable sources for numbers.
+Do **not** use markdown tables or code blocks.`;
 
   const ctx = quote
     ? [
@@ -53,55 +59,70 @@ function buildPrompt(input: TrendsRequestBody): string {
       ].join("\n")
     : `--- Context ---\n(no simulator numbers provided)\n--- End Context ---`;
 
+  // 공통: “최근 3일 라인 로그” 형식 정의
+  const threeDayLineLog =
+`Add a **3-day line log** in reverse chronological order (today=${todayISO()} included).
+Each line must follow exactly this pattern (no tables, no code blocks):
+- YYYY-MM-DD — USD/KRW: <value> ; Dollar Index: <value>  (source)
+If official DXY is unavailable, use FRED Nominal Broad U.S. Dollar Index (DTWEXBGS) as a proxy.
+Keep values short (few decimals).`;
+
   if (stage === "fxBefore") {
     return [
       header,
       ctx,
-      `Task: 환전1(사전: Base→ViaBefore) 최신 동향 요약(웹 검색 기반).`,
-      `Include (숫자/날짜):`,
-      `- KRW/USD 최근 30~90일 추이 핵심(레벨·변동폭·중요일자)`,
-      `- 달러 인덱스(DXY) 개념과 최근 레벨/변동`,
-      `- 사전 환전 on/off가 결과에 미치는 영향`,
-      `- 사전 환전 타이밍 제안: 보수적/공격적 (근거 수치 포함)`,
-      `Constraints: 불릿 6~10개, 한국어.`,
+      `Task: 환전1(사전: Base→ViaBefore) 최신 동향(웹 검색 기반).`,
+      threeDayLineLog,
+      `Answer with three labeled sections (A/B/C) in Korean:`,
+      `A) 일반적인 환율 추이 + "**오늘(${todayISO()})의 달러/원 환율**"을 명시 (간결 수치).`,
+      `B) 위의 **3-day line log**를 그대로 제시.`,
+      `C) **AI가 추천하는 사전 환전 시점·거래 총량·가격**을 보수적/공격적 2안으로 제시.`,
+      `   - 근거와 리스크(스프레드·유동성·체류시간)를 간단히 수치로.`,
       `User Intent: ${query}`,
     ].join("\n");
   }
-  if (stage === "fxAfter") {
-    return [
-      header,
-      ctx,
-      `Task: 환전2(사후: ViaAfter→Target) 최신 동향 요약(웹 검색 기반).`,
-      `Include (숫자/날짜):`,
-      `- KRW/USD 최근 추이 핵심 & DXY`,
-      `- 사후 환전 on/off 영향`,
-      `- 수취 직전 환전 타이밍 제안: 보수적/공격적`,
-      `Constraints: 불릿 6~10개, 한국어.`,
-      `User Intent: ${query}`,
-    ].join("\n");
-  }
+
   if (stage === "coin") {
     return [
       header,
       ctx,
-      `Task: 선택 스테이블코인 및 발행기관 신뢰성 근거 요약(웹 검색 기반).`,
-      `Include: 코인 일반, 발행기관 개요, 자산/준비금, 연혁, 감사/공시, 체인 유동성, 최근 이슈`,
-      `Constraints: 불릿 6~10개, 한국어.`,
+      `Task: 코인 단계(USDT/USDC 등) 최신 동향/설명(웹 검색 기반).`,
+      `Answer with three labeled sections (A/B/C) in Korean:`,
+      `A) **Krugal Model 기반 USDT(테더) 가격 결정 이론** 가정하에 "**${todayISO()} 현재 USDT 가격**" 평가(개념/한계 명시).`,
+      `B) **적용 알고리즘 설명** 및 비교(블랙-숄즈 vs Krugal 등), 코인 네트워크 송금의 장단점(수수료·유동성·혼잡).`,
+      `C) **상황별 의사결정**(예: "$5,000 이하(≈600만원) 송금") — 코인 네트워크 vs 대안 비교(수수료·속도·리스크)`,
       `User Intent: ${query}`,
     ].join("\n");
   }
+
+  if (stage === "fxAfter") {
+    return [
+      header,
+      ctx,
+      `Task: 환전2(사후: ViaAfter→Target) 최신 동향(웹 검색 기반).`,
+      threeDayLineLog,
+      `Answer with three labeled sections (A/B/C) in Korean:`,
+      `A) 일반적인 환율 추이 + "**오늘(${todayISO()})의 원/달러 환율**"을 명시 (간결 수치).`,
+      `B) 위의 **3-day line log**를 그대로 제시.`,
+      `C) **AI가 추천하는 사후 환전 시점·거래 총량·가격**을 보수적/공격적 2안으로 제시(수취 직전 전략 포함).`,
+      `User Intent: ${query}`,
+    ].join("\n");
+  }
+
   // final
   return [
     header,
     ctx,
-    `Task: 전체 파이프라인의 비용 구조/수수료율을 웹 검색 관점으로 보완.`,
-    `Include: 국내·해외 송금/거래소 수수료 관행, 체인 출금 수수료, 대안 비교 및 체크리스트 3~5개`,
-    `Constraints: 불릿 6~10개, 한국어.`,
+    `Task: 전체 파이프라인(환전1→코인→환전2)의 비용/리스크를 최근 3일 지표로 보완(웹 검색 기반).`,
+    threeDayLineLog,
+    `Answer with three labeled sections (A/B/C) in Korean:`,
+    `A) 최근 3일 USD/KRW & 달러지수 변동이 **총비용**(수수료율/절대금액)에 미치는 영향.`,
+    `B) 국내·해외 송금/거래소 수수료 관행, 체인 출금비, 대안 비교(최근 3일 내 변화 강조).`,
+    `C) 비용·리스크 최소화 체크리스트 3~5개(실행 가능 항목, 수치 위주).`,
     `User Intent: ${query}`,
   ].join("\n");
 }
 
-/** Perplexity 호출 */
 async function callPerplexity(prompt: string): Promise<PplxResp> {
   if (!PPLX_API_KEY) throw new Error("Missing PERPLEXITY_API_KEY");
   const body = {

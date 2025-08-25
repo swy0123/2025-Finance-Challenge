@@ -29,12 +29,6 @@ export interface PriceApiResponse {
   asOf: string;            // ISO
 }
 
-/** /api/report 응답 타입 (LLM 요약) */
-export interface ReportApiResponse {
-  searchSummary: string;
-  analysis: string;
-}
-
 /** /api/quote 요청 타입 */
 export interface QuoteRequest {
   amount: number;

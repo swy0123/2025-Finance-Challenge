@@ -5,7 +5,6 @@ import type {
   StableSymbol,
   QuoteRequest,
   QuoteResponse,
-  ReportApiResponse,
   CoinAlgoName,
   ReportStage,
 } from "@/types/api";
@@ -62,10 +61,6 @@ export default function TransferPage() {
   // ===== 결과/상태 =====
   const [quote, setQuote] = useState<QuoteResponse | null>(null);
 
-  // Gemini/Perplexity 결과 및 단계 표시
-  const [geminiReport, setGeminiReport] = useState<ReportApiResponse | null>(null);
-  const [geminiStage, setGeminiStage] = useState<ReportStage | null>(null);
-
   const [trendsText, setTrendsText] = useState<string>("");
   const [trendsStage, setTrendsStage] = useState<ReportStage | null>(null);
 
@@ -79,8 +74,8 @@ export default function TransferPage() {
 
   // 단계 가시성: 비활성화면 보고서 레이아웃 숨김
   const isStageVisible = (st: ReportStage | null): boolean => {
-    if (!st) return true;               // null일 땐 체크 불필요
-    if (st === "coin" || st === "final") return true; // 항상 표시
+    if (!st) return true;
+    if (st === "coin" || st === "final") return true;
     if (st === "fxBefore") return enableFxBeforeCoin;
     if (st === "fxAfter")  return enableFxAfterCoin;
     return false;
@@ -91,8 +86,6 @@ export default function TransferPage() {
     setLoading(true);
     setErrorMsg(null);
     setQuote(null);
-    setGeminiReport(null);
-    setGeminiStage(null);
     setTrendsText("");
     setTrendsStage(null);
     try {
@@ -131,51 +124,7 @@ export default function TransferPage() {
     }
   };
 
-  // ---------- 단계별 Gemini ----------
-  const handleGemini = async (stage: ReportStage) => {
-    if (!quote) {
-      setErrorMsg("먼저 '견적 계산'을 실행해 주세요.");
-      return;
-    }
-    if (!isStageVisible(stage)) {
-      setErrorMsg("해당 단계가 비활성화되어 보고서를 생성할 수 없습니다.");
-      return;
-    }
-    setLoading(true);
-    setErrorMsg(null);
-    setGeminiReport(null);
-    setGeminiStage(null);
-    try {
-      const intent =
-        stage === "fxBefore"
-          ? "환전1(사전): 옵션 설명 + KRW/USD 추이 + DXY + 사전 환전 타이밍/가격"
-          : stage === "coin"
-          ? "코인: 일반 정보 + 발행 기관 + 신뢰성 근거(자산, 연식, 추이 등)"
-          : stage === "fxAfter"
-          ? "환전2(사후): 옵션 설명 + KRW/USD 추이 + DXY + 수취 직전 환전 타이밍/가격"
-          : "최종: 출발→목표까지 총 수수료율/금액 요약";
-
-      const res = await fetch("/api/report", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ stage, query: intent, quote }),
-      });
-      const data: unknown = await res.json();
-      if (!res.ok || isApiError(data)) {
-        setErrorMsg(isApiError(data) ? data.error : "보고서 생성 중 오류가 발생했습니다.");
-        return;
-      }
-      const r = data as ReportApiResponse;
-      setGeminiReport(r);
-      setGeminiStage(stage);
-    } catch {
-      setErrorMsg("네트워크 오류가 발생했습니다.");
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  // ---------- 단계별 Perplexity ----------
+  // ---------- Perplexity ----------
   const handleTrends = async (stage: ReportStage) => {
     if (!isStageVisible(stage)) {
       setErrorMsg("해당 단계가 비활성화되어 보고서를 생성할 수 없습니다.");
@@ -189,12 +138,12 @@ export default function TransferPage() {
       const baseInfo = `base=${baseCurrency}, viaBefore=${viaFiatBefore}, viaAfter=${viaFiatAfter}, target=${targetCurrency}, coin=${stableSymbol}, fx1=${enableFxBeforeCoin}, fx2=${enableFxAfterCoin}, algo=${enableCoinAlgo ? coinAlgoName : "OFF"}`;
       const q =
         stage === "fxBefore"
-          ? `[FX Before] ${baseInfo} | KRW/USD 최근 30~90일 추이 + DXY + 사전 환전 타이밍`
+          ? `[FX Before] ${baseInfo} | 최근 3일 USD/KRW & 달러지수 테이블 + 사전 환전 타이밍`
           : stage === "coin"
-          ? `[COIN] ${baseInfo} | ${stableSymbol} 기본/발행기관/신뢰성 근거`
+          ? `[COIN] ${baseInfo} | ${stableSymbol} 기본/발행기관/신뢰성 근거 (최근 3일 이슈 중심)`
           : stage === "fxAfter"
-          ? `[FX After] ${baseInfo} | KRW/USD 추이 + DXY + 수취 직전 환전 타이밍`
-          : `[FINAL] ${baseInfo} | 전체 수수료율·금액 총정리 및 개선 포인트`;
+          ? `[FX After] ${baseInfo} | 최근 3일 USD/KRW & 달러지수 테이블 + 수취 직전 환전 타이밍`
+          : `[FINAL] ${baseInfo} | 최근 3일 지표 반영한 총비용/개선 포인트`;
 
       const res = await fetch("/api/trends", {
         method: "POST",
@@ -230,7 +179,6 @@ export default function TransferPage() {
   };
 
   const btn = "button";
-
   const finalUnit = quote?.inputs?.targetCurrency ?? targetCurrency;
 
   return (
@@ -238,7 +186,7 @@ export default function TransferPage() {
       <h1 style={{ marginBottom: 16, letterSpacing: 0.3 }}>스테이블 코인 송금/거래 시뮬레이터</h1>
 
       <div className="card">
-        {/* 1) 타임라인 */}
+        {/* 타임라인 */}
         <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap", marginBottom: 10 }}>
           {enableFxBeforeCoin && (
             <>
@@ -260,40 +208,36 @@ export default function TransferPage() {
           )}
         </div>
 
-        {/* 1-1) 단계별 LLM 버튼들 (비활성 단계는 숨김) */}
+        {/* 단계별 Perplexity 버튼만 */}
         {enableFxBeforeCoin && (
-          <StageToolbar
-            title="환전1(사전) 리포트"
-            caption="옵션 영향 / KRW·USD 추이 / DXY / 사전 타이밍"
-            onGemini={() => handleGemini("fxBefore")}
+          <ToolbarSingle
+            title="환전1(사전) — 최신 동향 (Perplexity)"
+            caption="최근 3일 USD/KRW & 달러지수 테이블 + 사전 타이밍"
             onTrends={() => handleTrends("fxBefore")}
           />
         )}
 
-        <StageToolbar
-          title="코인 단계 리포트"
-          caption="코인·발행기관 / (Perplexity) 신뢰성 근거"
-          onGemini={() => handleGemini("coin")}
+        <ToolbarSingle
+          title="코인 단계 — 최신 동향 (Perplexity)"
+          caption="발행기관/신뢰성 근거, 최근(3일) 이슈 중심"
           onTrends={() => handleTrends("coin")}
         />
 
         {enableFxAfterCoin && (
-          <StageToolbar
-            title="환전2(사후) 리포트"
-            caption="옵션 영향 / KRW·USD 추이 / DXY / 수취 직전 타이밍"
-            onGemini={() => handleGemini("fxAfter")}
+          <ToolbarSingle
+            title="환전2(사후) — 최신 동향 (Perplexity)"
+            caption="최근 3일 USD/KRW & 달러지수 테이블 + 수취 직전 타이밍"
             onTrends={() => handleTrends("fxAfter")}
           />
         )}
 
-        <StageToolbar
-          title="최종 종합 리포트"
-          caption="전체 수수료율/금액 총정리 (Perplexity)"
-          onGemini={null}
+        <ToolbarSingle
+          title="최종 — 최신 동향 (Perplexity)"
+          caption="3일 지표 반영한 총비용/개선 포인트"
           onTrends={() => handleTrends("final")}
         />
 
-        {/* 2) 단계 토글 */}
+        {/* 단계 토글 */}
         <div style={{ display: "flex", gap: 16, alignItems: "center", margin: "8px 0 8px", flexWrap: "wrap" }}>
           <label style={{ display: "inline-flex", alignItems: "center", gap: 8, color: CSSVARS.sub }}>
             <input type="checkbox" checked={enableFxBeforeCoin} onChange={(e) => setEnableFxBeforeCoin(e.target.checked)} />
@@ -322,7 +266,7 @@ export default function TransferPage() {
           </div>
         </div>
 
-        {/* 3) 드롭다운 */}
+        {/* 드롭다운 */}
         <div style={{ display: "grid", gridTemplateColumns: "repeat(5, minmax(0, 1fr))", gap: 12, marginBottom: 12 }}>
           <Field label="보내는 통화 (Base)">
             <select value={baseCurrency} onChange={(e) => setBaseCurrency(e.target.value as Currency)} style={baseInputStyle}>
@@ -351,7 +295,7 @@ export default function TransferPage() {
           </Field>
         </div>
 
-        {/* 4) 금액/수수료 */}
+        {/* 금액/수수료 */}
         <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: 12, marginBottom: 12 }}>
           <Field label={`보낼 금액 (${baseCurrency})`}>
             <input type="number" value={amount} onChange={(e) => setAmount(Number(e.target.value))} style={baseInputStyle} />
@@ -367,7 +311,7 @@ export default function TransferPage() {
           </Field>
         </div>
 
-        {/* 5) 액션: 견적 계산 */}
+        {/* 액션: 견적 계산 */}
         <div style={{ display: "flex", gap: 10, marginBottom: 8, flexWrap: "wrap" }}>
           <button onClick={handleQuote} disabled={loading} className={btn}>견적 계산</button>
         </div>
@@ -379,7 +323,7 @@ export default function TransferPage() {
           </p>
         )}
 
-        {/* 6) 결과 */}
+        {/* 결과 */}
         {quote && hasTotals(quote) && (
           <div style={{ marginTop: 8, marginBottom: 6, lineHeight: 1.7, background: CSSVARS.inputBg, border: `1px solid ${CSSVARS.border}`, borderRadius: 12, padding: 12 }}>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
@@ -391,18 +335,6 @@ export default function TransferPage() {
                 {quote.hooks.notes.map((n, i) => <div key={i}>• {n}</div>)}
               </div>
             ) : null}
-          </div>
-        )}
-
-        {/* Gemini 요약 (단계 표시) — 비활성화면 숨김 */}
-        {geminiReport && geminiStage && isStageVisible(geminiStage) && (
-          <div style={{ padding: 12, background: CSSVARS.inputBg, border: `1px solid ${CSSVARS.border}`, borderRadius: 12, marginTop: 8, lineHeight: 1.7 }}>
-            <h3 style={{ marginTop: 0 }}>
-              Gemini 분석 요약 — {geminiStage === "fxBefore" ? "환전1(사전)" : geminiStage === "coin" ? "코인" : geminiStage === "fxAfter" ? "환전2(사후)" : "최종"}
-            </h3>
-            <div style={{ whiteSpace: "pre-wrap", color: CSSVARS.sub }}>
-              {geminiReport.analysis}
-            </div>
           </div>
         )}
       </div>
@@ -443,12 +375,7 @@ export default function TransferPage() {
 }
 
 /** 소품들 */
-function StageToolbar(props: {
-  title: string;
-  caption: string;
-  onGemini: (() => void) | null;
-  onTrends: () => void;
-}) {
+function ToolbarSingle(props: { title: string; caption: string; onTrends: () => void }) {
   return (
     <div style={{
       display: "flex",
@@ -466,11 +393,6 @@ function StageToolbar(props: {
         <div style={{ color: CSSVARS.sub, fontSize: 12 }}>{props.caption}</div>
       </div>
       <div style={{ display: "flex", gap: 8 }}>
-        {props.onGemini ? (
-          <button onClick={props.onGemini} className="button btn-alt-1">Gemini 분석</button>
-        ) : (
-          <button disabled className="button btn-alt-1" title="해당 단계에서는 Gemini 버튼이 비활성화되었어요">Gemini 분석</button>
-        )}
         <button onClick={props.onTrends} className="button btn-alt-2">최신 동향 (Perplexity)</button>
       </div>
     </div>
